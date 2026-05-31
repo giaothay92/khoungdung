@@ -1,0 +1,6 @@
+{
+  "name": "Kho ứng dụng giáo dục",
+  "description": "Kho lưu trữ và chia sẻ các ứng dụng giáo dục thú vị dành cho giáo viên và học sinh.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
