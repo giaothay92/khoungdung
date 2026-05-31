@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { ExternalLink, Edit2, Trash2 } from 'lucide-react';
+import { ExternalLink, Edit2, Trash2, Heart } from 'lucide-react';
 import { EducationalApp } from '../types';
 import IconRenderer from './IconRenderer';
 
@@ -10,9 +10,11 @@ interface AppCardProps {
   isAdmin: boolean;
   onEdit?: (app: EducationalApp) => void;
   onDelete?: (app: EducationalApp) => void;
+  onLike?: (app: EducationalApp) => void;
+  currentUserUID?: string;
 }
 
-export default function AppCard({ app, isAdmin, onEdit, onDelete }: AppCardProps) {
+export default function AppCard({ app, isAdmin, onEdit, onDelete, onLike, currentUserUID }: AppCardProps) {
   
   // Custom metadata resolver based on category
   const getCategoryDetails = (category: string) => {
@@ -29,6 +31,8 @@ export default function AppCard({ app, isAdmin, onEdit, onDelete }: AppCardProps
   };
 
   const catDetails = getCategoryDetails(app.category);
+  const likedKey = currentUserUID ? `liked_${app.id}_${currentUserUID}` : '';
+  const hasLikedLocal = likedKey ? localStorage.getItem(likedKey) === 'true' : false;
 
   return (
     <motion.div
@@ -67,6 +71,46 @@ export default function AppCard({ app, isAdmin, onEdit, onDelete }: AppCardProps
           </p>
         </div>
 
+        {/* Community details: Contributor & Likes */}
+        <div className="pt-2 flex items-center justify-between border-t border-slate-100 text-xs">
+          <div className="flex items-center space-x-1.5 text-slate-400">
+            {app.contributorPhoto ? (
+              <img 
+                src={app.contributorPhoto} 
+                alt="" 
+                className="w-5 h-5 rounded-full object-cover border border-slate-200"
+                referrerPolicy="no-referrer"
+              />
+            ) : (
+              <div className="w-5 h-5 rounded-full bg-slate-100 text-slate-500 font-bold text-[10px] flex items-center justify-center border border-slate-200">
+                {(app.contributorName || 'C')[0]}
+              </div>
+            )}
+            <span className="text-slate-500 truncate max-w-[120px]" title={app.contributorName}>
+              Đóng góp: <span className="font-semibold text-slate-700">{app.contributorName || 'Bùi Thanh Huấn'}</span>
+            </span>
+          </div>
+
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              if (onLike) onLike(app);
+            }}
+            className={`inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg transition-all text-xs font-semibold hover:bg-rose-50 cursor-pointer ${
+              hasLikedLocal 
+                ? 'bg-rose-50/50 text-rose-600 border border-thin border-rose-100' 
+                : 'bg-slate-50 text-slate-500 border border-thin border-slate-100'
+            }`}
+            title="Thích ứng dụng này"
+          >
+            <Heart 
+              size={12} 
+              className={`${hasLikedLocal ? 'fill-rose-500 text-rose-500' : 'text-slate-400 hover:text-rose-500'}`} 
+            />
+            <span>{app.likesCount || 0}</span>
+          </button>
+        </div>
+
         {/* Footer actions inside the card */}
         <div className="pt-2 flex items-center justify-between border-t border-slate-50">
           
@@ -77,9 +121,11 @@ export default function AppCard({ app, isAdmin, onEdit, onDelete }: AppCardProps
               if (app.link === '#') {
                 e.preventDefault();
                 // Alert in iframe safe modal or interactive visual prompt
-                alert(`Đây là ứng dụng mẫu "${app.name}". Bạn vui lòng đăng nhập tài khoản Admin (mật khẩu: admin123) để sửa link thật cho học sinh dùng!`);
+                alert(`Đây là ứng dụng mẫu "${app.name}". Nhấp nút "Dùng thử" để mở trang trò chơi! Bạn có thể sửa link để trỏ về trang web thật.`);
               }
             }}
+            target="_blank"
+            rel="noopener noreferrer"
             className="inline-flex items-center space-x-1.5 px-4 py-2 bg-slate-900 hover:bg-indigo-600 text-white font-bold rounded-lg text-xs tracking-wider transition-colors duration-200 uppercase group-hover:shadow-md"
             id={`btn-live-test-${app.id}`}
           >
@@ -87,8 +133,8 @@ export default function AppCard({ app, isAdmin, onEdit, onDelete }: AppCardProps
             <ExternalLink size={12} />
           </a>
 
-          {/* Quick Admin Utility controls */}
-          {isAdmin && (
+          {/* Quick Admin/Owner controls */}
+          {(isAdmin || (currentUserUID && currentUserUID === app.contributorUID)) && (
             <div className="flex space-x-1" id={`admin-actions-${app.id}`}>
               <button
                 onClick={() => onEdit && onEdit(app)}

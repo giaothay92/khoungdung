@@ -1,0 +1,111 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile information saved when logging in with Google",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "The unique Firebase Authentication UID of the user"
+        },
+        "name": {
+          "type": "string",
+          "description": "The displayName of the user from Google"
+        },
+        "email": {
+          "type": "string",
+          "description": "The email address of the user"
+        },
+        "photoURL": {
+          "type": "string",
+          "description": "The profile photo URL of the user"
+        },
+        "role": {
+          "type": "string",
+          "description": "The role of the member in the community",
+          "enum": ["member", "admin"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the profile was registered"
+        }
+      },
+      "required": ["uid", "name", "email", "role", "createdAt"]
+    },
+    "EducationalApp": {
+      "title": "EducationalApp",
+      "description": "Community-generated and shared educational application",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The document ID in Firestore"
+        },
+        "name": {
+          "type": "string",
+          "description": "The name of the educational app"
+        },
+        "description": {
+          "type": "string",
+          "description": "Fully detailed description of what the app does"
+        },
+        "link": {
+          "type": "string",
+          "description": "Direct URL or external path to play/use the app"
+        },
+        "category": {
+          "type": "string",
+          "description": "The academic category of the application",
+          "enum": ["toan", "tieng_viet", "khoa_hoc", "khac"]
+        },
+        "audience": {
+          "type": "string",
+          "description": "The intended target audience for the app",
+          "enum": ["giao_vien", "hoc_sinh"]
+        },
+        "iconName": {
+          "type": "string",
+          "description": "The Lucide-react icon key"
+        },
+        "color": {
+          "type": "string",
+          "description": "Tailwind color gradient classes"
+        },
+        "contributorUID": {
+          "type": "string",
+          "description": "UID of the user who published this app"
+        },
+        "contributorName": {
+          "type": "string",
+          "description": "Name of the user who published this app"
+        },
+        "contributorPhoto": {
+          "type": "string",
+          "description": "Optional photo of the user who published this app"
+        },
+        "likesCount": {
+          "type": "integer",
+          "description": "Number of stars/likes accumulated"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The exact date and time when the app was submitted"
+        }
+      },
+      "required": ["name", "description", "link", "category", "audience", "iconName", "color", "contributorUID", "contributorName", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Protected user records indexed by Auth UID"
+    },
+    "/apps/{appId}": {
+      "schema": "EducationalApp",
+      "description": "Global educational applications submitted by community members"
+    }
+  }
+}

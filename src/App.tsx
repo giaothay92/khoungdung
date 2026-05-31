@@ -5,7 +5,9 @@ import {
   ChevronRight, Calendar, PlusCircle, ArrowRight, Compass, GraduationCap 
 } from 'lucide-react';
 
-import { EducationalApp, TeacherProfile, AppCategory } from './types';
+import { collection, onSnapshot, doc, setDoc, getDoc, updateDoc, deleteDoc, increment } from 'firebase/firestore';
+import { db, auth } from './lib/firebase';
+import { EducationalApp, TeacherProfile, AppCategory, UserProfile } from './types';
 import { INITIAL_APPS, DEFAULT_TEACHER } from './data/defaultApps';
 import Header from './components/Header';
 import Footer from './components/Footer';
@@ -14,52 +16,98 @@ import AppCard from './components/AppCard';
 import AdminPanel from './components/AdminPanel';
 import { CATEGORIES } from './components/IconRenderer';
 
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData?.map(provider => ({
+        providerId: provider.providerId,
+        email: provider.email,
+          })) || []
+    },
+    operationType,
+    path
+  }
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
 export default function App() {
   // Tab control: 'home' | 'library' | 'admin'
   const [currentTab, setTab] = useState<'home' | 'library' | 'admin'>('home');
 
-  // Load from localStorage or defaults
+  // Load from Firestore with local fallback/defaults
   const [apps, setApps] = useState<EducationalApp[]>([]);
   const [teacher, setTeacher] = useState<TeacherProfile>(DEFAULT_TEACHER);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
 
   // Search and Filter states for the Library Tab
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<AppCategory | 'all'>('all');
 
-  // Load initial state
+  // Sync state with Google Auth / Database on load
   useEffect(() => {
-    const cachedApps = localStorage.getItem('edu_apps');
-    if (cachedApps) {
-      try {
-        const parsed = JSON.parse(cachedApps) as EducationalApp[];
-        const merged = [...parsed];
-        let hasChanges = false;
-        INITIAL_APPS.forEach((initialApp) => {
-          if (!merged.some((app) => app.id === initialApp.id)) {
-            merged.push(initialApp);
-            hasChanges = true;
-          }
-        });
-        if (hasChanges) {
-          setApps(merged);
-          localStorage.setItem('edu_apps', JSON.stringify(merged));
-        } else {
-          setApps(parsed);
+    // 1. Listen to community apps from Firestore
+    const unsubscribeApps = onSnapshot(collection(db, 'apps'), (snapshot) => {
+      const appsList: EducationalApp[] = [];
+      snapshot.forEach((doc) => {
+        appsList.push(doc.data() as EducationalApp);
+      });
+      
+      // Sort: Newest first
+      appsList.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+      
+      // Merge with hardcoded initial apps to ensure fallback is always available
+      const merged: EducationalApp[] = [...appsList];
+      INITIAL_APPS.forEach((initialApp) => {
+        if (!merged.some((app) => app.id === initialApp.id)) {
+          merged.push(initialApp);
         }
-      } catch (e) {
-        setApps(INITIAL_APPS);
-      }
-    } else {
+      });
+      
+      setApps(merged);
+    }, (error) => {
+      console.warn('Unable to subscribe to Firestore apps (using offline defaults):', error);
       setApps(INITIAL_APPS);
-      localStorage.setItem('edu_apps', JSON.stringify(INITIAL_APPS));
-    }
+    });
 
+    // 2. Load teacher bio from localStorage
     const cachedProfile = localStorage.getItem('edu_teacher_profile');
     if (cachedProfile) {
       try {
         const parsed = JSON.parse(cachedProfile);
-        // Automatically migrate profile if it has the old name
         if (parsed && (parsed.name === 'Nguyễn Thanh Huân' || !parsed.name)) {
           const updated = {
             ...DEFAULT_TEACHER,
@@ -78,23 +126,39 @@ export default function App() {
       }
     } else {
       setTeacher(DEFAULT_TEACHER);
-      localStorage.setItem('edu_teacher_profile', JSON.stringify(DEFAULT_TEACHER));
     }
 
-    // Load admin login persistence (optionally cached per session)
+    // 3. Load manual password admin session as a fallback (if any)
     const storedAdmin = sessionStorage.getItem('is_edu_admin');
     if (storedAdmin === 'true') {
       setIsAdmin(true);
     }
+
+    return () => {
+      unsubscribeApps();
+    };
   }, []);
 
-  // Update apps state helper
-  const updateAppsList = (newApps: EducationalApp[]) => {
-    setApps(newApps);
-    localStorage.setItem('edu_apps', JSON.stringify(newApps));
-  };
+  // Update administrative privileges based on Google Auth Role
+  useEffect(() => {
+    if (userProfile) {
+      if (userProfile.role === 'admin') {
+        setIsAdmin(true);
+      } else {
+        const storedAdmin = sessionStorage.getItem('is_edu_admin');
+        if (storedAdmin !== 'true') {
+          setIsAdmin(false);
+        }
+      }
+    } else {
+      const storedAdmin = sessionStorage.getItem('is_edu_admin');
+      if (storedAdmin !== 'true') {
+        setIsAdmin(false);
+      }
+    }
+  }, [userProfile]);
 
-  // Login action handler
+  // Login action handler (Fallback back-door password check)
   const loginAdmin = (password: string): boolean => {
     if (password === 'admin123') {
       setIsAdmin(true);
@@ -113,36 +177,143 @@ export default function App() {
     }
   };
 
-  // Add or Edit app operation
-  const handleSaveApp = (appData: Omit<EducationalApp, 'id'> & { id?: string }) => {
-    let updated: EducationalApp[];
-    if (appData.id) {
-      // Edit mode
-      updated = apps.map(item => item.id === appData.id ? { 
-        ...item, 
-        name: appData.name,
-        description: appData.description,
-        link: appData.link,
-        category: appData.category,
-        iconName: appData.iconName,
-        color: appData.color
-      } : item);
-    } else {
-      // Add mode - generate a simple random ID string
-      const newId = `app-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-      const newApp: EducationalApp = {
-        id: newId,
-        ...appData,
-      };
-      updated = [newApp, ...apps];
+  // Add or Edit app operation in Firestore
+  const handleSaveApp = async (appData: Omit<EducationalApp, 'id'> & { id?: string }) => {
+    if (!userProfile) {
+      alert('Vui lòng đăng nhập bằng Google ở góc trên cùng bên phải trước khi đóng góp hoặc chỉnh sửa!');
+      return;
     }
-    updateAppsList(updated);
+
+    const pathForWrite = 'apps';
+    try {
+      if (appData.id) {
+        // Edit mode
+        const existingApp = apps.find(a => a.id === appData.id);
+        if (!existingApp) return;
+
+        // Verify if owner or admin
+        const canEdit = isAdmin || existingApp.contributorUID === userProfile.uid;
+        if (!canEdit) {
+          alert('Bạn không có quyền chỉnh sửa ứng dụng này! Chỉ người đóng góp hoặc Quản trị viên mới được sửa.');
+          return;
+        }
+
+        const updatedApp: EducationalApp = {
+          ...existingApp,
+          name: appData.name,
+          description: appData.description,
+          link: appData.link.trim() || '#',
+          category: appData.category,
+          audience: appData.audience,
+          iconName: appData.iconName,
+          color: appData.color
+        };
+
+        await setDoc(doc(db, 'apps', appData.id), updatedApp);
+      } else {
+        // Create mode
+        const newId = `app-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        const newApp: EducationalApp = {
+          id: newId,
+          name: appData.name,
+          description: appData.description,
+          link: appData.link.trim() || '#',
+          category: appData.category,
+          audience: appData.audience,
+          iconName: appData.iconName,
+          color: appData.color,
+          contributorUID: userProfile.uid,
+          contributorName: userProfile.name,
+          contributorPhoto: userProfile.photoURL,
+          likesCount: 0,
+          createdAt: new Date().toISOString()
+        };
+
+        await setDoc(doc(db, 'apps', newId), newApp);
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, pathForWrite);
+    }
   };
 
-  // Delete operation
-  const handleDeleteApp = (id: string) => {
-    const updated = apps.filter(item => item.id !== id);
-    updateAppsList(updated);
+  // Delete operation on Firestore
+  const handleDeleteApp = async (id: string) => {
+    if (!userProfile) {
+      alert('Vui lòng đăng nhập Google để thực hiện thao tác xóa!');
+      return;
+    }
+
+    const appToDelete = apps.find(a => a.id === id);
+    if (!appToDelete) return;
+
+    if (!isAdmin && appToDelete.contributorUID !== userProfile.uid) {
+      alert('Chỉ quản trị viên hoặc người gốc đóng góp ứng dụng này mới được quyền xóa!');
+      return;
+    }
+
+    const pathForDelete = 'apps';
+    try {
+      await deleteDoc(doc(db, 'apps', id));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, pathForDelete);
+    }
+  };
+
+  // Like / Unlike action handling using atomic Firestore increment
+  const handleLikeApp = async (app: EducationalApp) => {
+    if (!userProfile) {
+      alert('Vui lòng đăng nhập Google để yêu thích ứng dụng này!');
+      return;
+    }
+
+    const likedKey = `liked_${app.id}_${userProfile.uid}`;
+    const hasLiked = localStorage.getItem(likedKey) === 'true';
+    const pathForHeart = 'apps';
+
+    try {
+      const appRef = doc(db, 'apps', app.id);
+      if (hasLiked) {
+        // Decrement by 1
+        await updateDoc(appRef, {
+          likesCount: increment(-1)
+        });
+        localStorage.removeItem(likedKey);
+      } else {
+        // Increment by 1
+        await updateDoc(appRef, {
+          likesCount: increment(1)
+        });
+        localStorage.setItem(likedKey, 'true');
+      }
+    } catch (error) {
+      // If document is hardcoded or error has permission issues, we can try creating a stub, or save locally
+      if (app.id.startsWith('toan-vui') || app.id.startsWith('be-hoc-') || app.id.startsWith('kham-pha-') || app.id.startsWith('do-vui-') || app.id.startsWith('so-tay-') || app.id.startsWith('quan-ly-') || app.id.startsWith('nhan-xet-') || app.id.startsWith('so-diem-')) {
+        // To make initial apps likable, let's create a snapshot of them in firestore if it was voted for!
+        try {
+          const appRef = doc(db, 'apps', app.id);
+          const appSnap = await getDoc(appRef);
+          if (!appSnap.exists()) {
+            const seedApp: EducationalApp = {
+              ...app,
+              contributorUID: 'system-admin',
+              contributorName: 'Bùi Thanh Huấn',
+              likesCount: hasLiked ? Math.max(0, app.likesCount - 1) : app.likesCount + 1,
+              createdAt: app.createdAt || new Date().toISOString()
+            };
+            await setDoc(appRef, seedApp);
+            if (hasLiked) {
+              localStorage.removeItem(likedKey);
+            } else {
+              localStorage.setItem(likedKey, 'true');
+            }
+            return;
+          }
+        } catch (e) {
+          console.error('Error seeding fallback app in database:', e);
+        }
+      }
+      handleFirestoreError(error, OperationType.UPDATE, pathForHeart);
+    }
   };
 
   // Update Teacher profile parameters
@@ -169,6 +340,7 @@ export default function App() {
         teacherName={teacher.name} 
         isAdmin={isAdmin}
         logoutAdmin={logoutAdmin}
+        onUserChanged={setUserProfile}
       />
 
       {/* Main Content Area */}
@@ -302,6 +474,8 @@ export default function App() {
                         key={app.id}
                         app={app}
                         isAdmin={isAdmin}
+                        currentUserUID={userProfile?.uid}
+                        onLike={handleLikeApp}
                         onEdit={(target) => {
                           setTab('admin');
                           // Simple delay to let the page render, done in edit trigger inside AdminPanel

@@ -1,0 +1,106 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Catch-all safety net: default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Global authorization/identity primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // UserProfile Entity Validation Helper
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['uid', 'name', 'email', 'photoURL', 'role', 'createdAt'])
+        && data.keys().size() == 6
+        && data.uid == request.auth.uid
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 100
+        && data.email is string && data.email.size() > 0 && data.email.size() <= 100
+        && data.photoURL is string && data.photoURL.size() <= 500
+        && data.role in ['member', 'admin']
+        && (data.createdAt == request.time || data.createdAt is string);
+    }
+
+    // User Records collection routing rules
+    match /users/{userId} {
+      allow get: if isSignedIn() && (
+        userId == request.auth.uid || 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+      );
+      allow list: if isSignedIn() && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+        
+      allow create: if isSignedIn() && userId == request.auth.uid && 
+        isValidUserProfile(incoming()) && incoming().role == 'member';
+        
+      allow update: if isSignedIn() && userId == request.auth.uid && 
+        isValidUserProfile(incoming()) && incoming().role == existing().role;
+        
+      allow delete: if isSignedIn() && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // EducationalApp Entity Validation Helper
+    function isValidEducationalApp(data) {
+      return data.keys().hasAll(['id', 'name', 'description', 'link', 'category', 'audience', 'iconName', 'color', 'contributorUID', 'contributorName', 'likesCount', 'createdAt'])
+        && data.keys().size() == 12
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 150
+        && data.description is string && data.description.size() > 0 && data.description.size() <= 1500
+        && data.link is string && data.link.size() > 0 && data.link.size() <= 1000
+        && data.category in ['toan', 'tieng_viet', 'khoa_hoc', 'khac']
+        && data.audience in ['giao_vien', 'hoc_sinh']
+        && data.iconName is string && data.iconName.size() <= 64
+        && data.color is string && data.color.size() <= 128
+        && data.contributorName is string && data.contributorName.size() > 0 && data.contributorName.size() <= 100
+        && data.likesCount is int && data.likesCount >= 0
+        && (data.createdAt == request.time || data.createdAt is string);
+    }
+
+    // Apps directory collection routing rules
+    match /apps/{appId} {
+      allow get, list: if true; // Anyone can retrieve or list applications
+      
+      allow create: if isSignedIn() && isValidId(appId) && 
+        isValidEducationalApp(incoming()) && 
+        incoming().contributorUID == request.auth.uid &&
+        incoming().likesCount == 0;
+        
+      allow update: if isSignedIn() && isValidId(appId) && (
+        // Action 1: Owner updates details
+        (isValidEducationalApp(incoming()) && 
+         incoming().contributorUID == request.auth.uid &&
+         incoming().contributorUID == existing().contributorUID && 
+         incoming().createdAt == existing().createdAt && 
+         incoming().likesCount == existing().likesCount &&
+         incoming().diff(existing()).affectedKeys().hasOnly(['name', 'description', 'link', 'category', 'audience', 'iconName', 'color'])) ||
+         
+        // Action 2: Anyone likes/dislikes (modifies only likesCount field)
+        (incoming().diff(existing()).affectedKeys().hasOnly(['likesCount']) && 
+         (incoming().likesCount == existing().likesCount + 1 || incoming().likesCount == existing().likesCount - 1)) ||
+         
+        // Action 3: Admin override
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
+      
+      allow delete: if isSignedIn() && (
+        existing().contributorUID == request.auth.uid ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+      );
+    }
+  }
+}

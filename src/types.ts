@@ -10,6 +10,20 @@ export interface EducationalApp {
   audience: AppAudience; // Phân loại: Dành cho giáo viên hay học sinh
   iconName: string; // The Lucide React icon name
   color: string;    // Tailwind color gradient/solid classes for custom theming
+  contributorUID?: string;
+  contributorName?: string;
+  contributorPhoto?: string;
+  likesCount?: number;
+  createdAt?: string;
+}
+
+export interface UserProfile {
+  uid: string;
+  name: string;
+  email: string;
+  photoURL: string;
+  role: 'member' | 'admin';
+  createdAt: string;
 }
 
 export interface TeacherProfile {
@@ -21,3 +35,4 @@ export interface TeacherProfile {
   phone?: string;
   zaloLink?: string;
 }
+
