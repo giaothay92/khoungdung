@@ -29,9 +29,9 @@ service cloud.firestore {
       return data.keys().hasAll(['uid', 'name', 'email', 'photoURL', 'role', 'createdAt'])
         && data.keys().size() == 6
         && data.uid == request.auth.uid
-        && data.name is string && data.name.size() > 0 && data.name.size() <= 100
-        && data.email is string && data.email.size() > 0 && data.email.size() <= 100
-        && data.photoURL is string && data.photoURL.size() <= 500
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 250
+        && data.email is string && data.email.size() > 0 && data.email.size() <= 250
+        && data.photoURL is string && data.photoURL.size() <= 2000
         && data.role in ['member', 'admin']
         && (data.createdAt == request.time || data.createdAt is string);
     }
@@ -46,10 +46,16 @@ service cloud.firestore {
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
         
       allow create: if isSignedIn() && userId == request.auth.uid && 
-        isValidUserProfile(incoming()) && incoming().role == 'member';
+        isValidUserProfile(incoming()) && (
+          incoming().role == 'member' || 
+          (incoming().role == 'admin' && request.auth.token.email == 'thanhhuanhb@gmail.com')
+        );
         
       allow update: if isSignedIn() && userId == request.auth.uid && 
-        isValidUserProfile(incoming()) && incoming().role == existing().role;
+        isValidUserProfile(incoming()) && (
+          incoming().role == existing().role ||
+          (incoming().role == 'admin' && request.auth.token.email == 'thanhhuanhb@gmail.com')
+        );
         
       allow delete: if isSignedIn() && 
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
